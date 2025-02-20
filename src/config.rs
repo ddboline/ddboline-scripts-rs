@@ -41,6 +41,12 @@ pub struct ConfigInner {
     pub temperature_path: PathBuf,
     #[serde(default = "default_uptime_path")]
     pub uptime_path: PathBuf,
+    #[serde(default = "Vec::new")]
+    pub distros: Vec<StackString>,
+    #[serde(default = "Vec::new")]
+    pub repo_directories: Vec<StackString>,
+    #[serde(default = "Vec::new")]
+    pub architectures: Vec<StackString>,
 }
 
 fn default_workspace_path() -> PathBuf {
