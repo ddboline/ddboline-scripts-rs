@@ -1,0 +1,27 @@
+[package]
+name = "ddboline-scripts-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+dirs = "6.0"
+dotenvy = "0.15"
+envy = "0.4"
+log = "0.4"
+serde = "1.0"
+stack-string = { git = "https://github.com/ddboline/stack-string-rs.git", features=["postgres_types"], tag="1.0.2" }
+stdout-channel = "0.6"
+tokio = {version="1.43", features=["rt", "macros", "rt-multi-thread", "fs", "io-util", "process", "time"]}
+time = {version="0.3", features=["serde-human-readable", "macros", "formatting"]}
+time-tz = {version="2.0", features=["system"]}
+
+[[bin]]
+name = "system-stats"
+path = "src/system_stats.rs"
+doc = false
+
+[[bin]]
+name = "authenticate-rs"
+path = "src/authenticate.rs"
+doc = false

@@ -1,0 +1,252 @@
+use anyhow::{format_err, Error};
+use log::{debug, error};
+use stack_string::{format_sstr, StackString};
+use std::{
+    path::Path,
+    process::{ExitStatus, Stdio},
+    sync::LazyLock,
+    time::Duration,
+};
+use stdout_channel::StdoutChannel;
+use time::{macros::format_description, OffsetDateTime};
+use time_tz::{timezones::db::UTC, OffsetDateTimeExt, Tz};
+use tokio::{
+    fs,
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    process::{Child, Command},
+    task::{spawn, JoinHandle},
+    time::sleep,
+};
+
+use ddboline_scripts_rs::config::{Config, CONFIG_DIR, HOME_DIR};
+
+static LOCAL_TZ: LazyLock<&'static Tz> =
+    LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
+const LOG_DIRs: [&'static str; 2] = ["crontab", "crontab_aws"];
+
+async fn get_first_line_of_file(fpath: &Path) -> Result<String, Error> {
+    let mut buf = String::new();
+    if fpath.exists() {
+        if let Ok(f) = fs::File::open(fpath).await {
+            let mut buf_read = BufReader::new(f);
+            buf_read.read_line(&mut buf).await?;
+        }
+    }
+    Ok(buf)
+}
+
+async fn output_to_stdout(
+    mut reader: BufReader<impl AsyncRead + Unpin>,
+    eol: u8,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
+    let mut buf = Vec::new();
+    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
+        if bytes > 0 {
+            stdout.send(format_sstr!(
+                "{}",
+                String::from_utf8_lossy(&buf).trim_end_matches('\n')
+            ));
+        } else {
+            break;
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+async fn output_to_debug(
+    mut reader: BufReader<impl AsyncRead + Unpin>,
+    eol: u8,
+) -> Result<(), Error> {
+    let mut buf = Vec::new();
+    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
+        if bytes > 0 {
+            debug!("{}", String::from_utf8_lossy(&buf));
+        } else {
+            break;
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+async fn output_to_error(
+    mut reader: BufReader<impl AsyncRead + Unpin>,
+    eol: u8,
+) -> Result<(), Error> {
+    let mut buf = Vec::new();
+    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
+        if bytes > 0 {
+            error!("{}", String::from_utf8_lossy(&buf));
+        } else {
+            break;
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+async fn process_child(
+    mut p: Child,
+    stdout_channel: &StdoutChannel<StackString>,
+) -> Result<ExitStatus, Error> {
+    let stdout = p.stdout.take().ok_or_else(|| format_err!("No Stdout"))?;
+    let stderr = p.stderr.take().ok_or_else(|| format_err!("No Stderr"))?;
+    let reader = BufReader::new(stdout);
+    let stdout_channel = stdout_channel.clone();
+    let stdout_task: JoinHandle<Result<(), Error>> =
+        spawn(async move { output_to_stdout(reader, b'\n', &stdout_channel).await });
+    let reader = BufReader::new(stderr);
+    let stderr_task: JoinHandle<Result<(), Error>> =
+        spawn(async move { output_to_error(reader, b'\n').await });
+    let status = p.wait().await?;
+    stdout_task.await??;
+    stderr_task.await??;
+    Ok(status)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let stdout = StdoutChannel::<StackString>::new();
+
+    let config = Config::init_config()?;
+    let hostname = get_first_line_of_file(Path::new("/etc/hostname")).await?;
+    stdout.send(format_sstr!("hostname {hostname}"));
+
+    let current_date = OffsetDateTime::now_utc();
+
+    let format = format_description!(
+        "[year]-[month]-[day]T[hour]:[minute]:[second][offset_hour sign:mandatory]:[offset_minute]"
+    );
+
+    let date_str = current_date.to_timezone(*LOCAL_TZ).format(format)?;
+    stdout.send(format_sstr!("date {date_str}"));
+
+    let p = Command::new("echo")
+        .args([&format_sstr!("date\n{date_str}\n")])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let status = process_child(p, &stdout).await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        return Err(format_err!("echo failed with {code}"));
+    }
+
+    for log_dir in LOG_DIRs {
+        let log_path = HOME_DIR.join("log").join(&format_sstr!("{log_dir}.log"));
+        if log_path.exists() {
+            let new_path = HOME_DIR
+                .join("log")
+                .join(&format_sstr!("{log_dir}_{date_str}.log"));
+            stdout.send(format_sstr!("mv/gzip {log_path:?} {new_path:?}"));
+            // fs::rename(&log_path, &new_path).await?;
+            // let status =
+            // Command::new("gzip").args([&new_path]).status().await?;
+            // if !status.success() {
+            //     let code = status.code().ok_or_else(|| format_err!("No status
+            // code"))?;     println!("gzip failed with {code}");
+            // }
+        }
+    }
+    stdout.send(format_sstr!("sudo apt-get update"));
+    let p = Command::new("sudo")
+        .args(["apt-get", "update"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let status = process_child(p, &stdout).await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        return Err(format_err!("apt-get update failed with {code}"));
+    }
+    let status = Command::new(&config.send_to_telegram_path)
+        .args(&[
+            "-r",
+            "ddboline",
+            "-m",
+            &format_sstr!("{hostname} has updated"),
+        ])
+        .status()
+        .await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        return Err(format_err!("send-to-telegram failed with {code}"));
+    }
+    let p = Command::new("sudo")
+        .args([
+            "apt-get",
+            "-o",
+            "Dpkg::Options::=--force-confold",
+            "-o",
+            "Dpkg::Options::=--force-confdef",
+            "-y",
+            "dist-upgrade",
+        ])
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let status = process_child(p, &stdout).await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        return Err(format_err!("apt-get dist-upgrade failed with {code}"));
+    }
+    if hostname == "dilepton-tower" {
+        let status = Command::new("sudo")
+            .args(&["modprobe", "vboxdrv"])
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            return Err(format_err!("modprobe vboxdrv failed with {code}"));
+        }
+        let postgres_toml = CONFIG_DIR.join("backup_app_rust").join("postgres.toml");
+        if postgres_toml.exists() {
+            let postgres_toml = postgres_toml.to_string_lossy();
+            let p = Command::new(&config.backup_app_path)
+                .args(&["backup", "-f", &postgres_toml])
+                .spawn()?;
+            let status = process_child(p, &stdout).await?;
+            if !status.success() {
+                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                return Err(format_err!("backup_app_rust failed with {code}"));
+            }
+        }
+    }
+    let postgres_local_toml = CONFIG_DIR.join("backup_app_rust").join("postgres_local.toml");
+    if postgres_local_toml.exists() {
+        let postgres_local_toml = postgres_local_toml.to_string_lossy();
+        let p = Command::new(&config.backup_app_path)
+            .args(&["backup", "-f", &postgres_local_toml])
+            .spawn()?;
+        let status = process_child(p, &stdout).await?;
+        if !status.success() {
+            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            return Err(format_err!("backup_app_rust failed with {code}"));
+        }
+    }
+    if config.dropbox_path.exists() {
+        let status = Command::new(&config.dropbox_path).args(&["start"]).status().await?;
+        if !status.success() {
+            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            return Err(format_err!("dropbox failed with {code}"));
+        }
+    }
+    let status = Command::new(&config.send_to_telegram_path)
+        .args(&[
+            "-r",
+            "ddboline",
+            "-m",
+            &format_sstr!("{hostname} has finished"),
+        ])
+        .status()
+        .await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        return Err(format_err!("send-to-telegram failed with {code}"));
+    }
+    stdout.close().await?;
+    Ok(())
+}
