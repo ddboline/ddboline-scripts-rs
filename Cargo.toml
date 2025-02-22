@@ -4,6 +4,13 @@ version = "0.1.0"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2021"
 
+[package.metadata.deb]
+name = "ddboline-scripts-rs"
+priority = "optional"
+section = "rust"
+provides = "ddboline-scripts-rs"
+extended-description = """Utility Scripts"""
+
 [dependencies]
 anyhow = "1.0"
 dirs = "6.0"
