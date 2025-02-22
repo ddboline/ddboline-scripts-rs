@@ -101,14 +101,18 @@ impl Deref for Config {
 }
 
 impl Config {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn from_inner(inner: ConfigInner) -> Self {
         Self(Arc::new(inner))
     }
 
+    /// # Errors
+    /// Return error if callback function returns error after timeout
     pub fn init_config() -> Result<Self, Error> {
         let fname = Path::new("config.env");
 

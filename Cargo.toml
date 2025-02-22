@@ -26,3 +26,8 @@ doc = false
 name = "authenticate-rs"
 path = "src/authenticate.rs"
 doc = false
+
+[[bin]]
+name = "update-repos-rs"
+path = "src/update_repos.rs"
+doc = false

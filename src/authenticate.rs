@@ -1,54 +1,35 @@
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::too_many_lines)]
+
 use anyhow::{format_err, Error};
 use stack_string::{format_sstr, StackString};
-use std::{
-    path::Path,
-    process::{ExitStatus, Stdio},
-    sync::LazyLock,
-};
+use std::{path::Path, process::Stdio, sync::LazyLock};
 use stdout_channel::StdoutChannel;
 use time::{macros::format_description, OffsetDateTime};
 use time_tz::{timezones::db::UTC, OffsetDateTimeExt, Tz};
-use tokio::{
-    fs,
-    io::BufReader,
-    process::{Child, Command},
-    task::{spawn, JoinHandle},
-};
+use tokio::{fs, process::Command};
 
 use ddboline_scripts_rs::{
     config::{Config, CONFIG_DIR, HOME_DIR},
-    get_first_line_of_file, output_to_error, output_to_stdout,
+    get_first_line_of_file, process_child, update_repos,
 };
 
 static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
-const LOG_DIRS: [&'static str; 2] = ["crontab", "crontab_aws"];
-
-async fn process_child(
-    mut p: Child,
-    stdout_channel: &StdoutChannel<StackString>,
-) -> Result<ExitStatus, Error> {
-    let stdout = p.stdout.take().ok_or_else(|| format_err!("No Stdout"))?;
-    let stderr = p.stderr.take().ok_or_else(|| format_err!("No Stderr"))?;
-    let reader = BufReader::new(stdout);
-    let stdout_channel = stdout_channel.clone();
-    let stdout_task: JoinHandle<Result<(), Error>> =
-        spawn(async move { output_to_stdout(reader, b'\n', &stdout_channel).await });
-    let reader = BufReader::new(stderr);
-    let stderr_task: JoinHandle<Result<(), Error>> =
-        spawn(async move { output_to_error(reader, b'\n').await });
-    let status = p.wait().await?;
-    stdout_task.await??;
-    stderr_task.await??;
-    Ok(status)
-}
+const LOG_DIRS: [&str; 2] = ["crontab", "crontab_aws"];
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let stdout = StdoutChannel::<StackString>::new();
 
     let config = Config::init_config()?;
-    let hostname: StackString = get_first_line_of_file(Path::new("/etc/hostname")).await?.trim().into();
+    let hostname: StackString = get_first_line_of_file(Path::new("/etc/hostname"))
+        .await?
+        .trim()
+        .into();
     stdout.send(format_sstr!("hostname {hostname}"));
 
     let current_date = OffsetDateTime::now_utc();
@@ -61,20 +42,16 @@ async fn main() -> Result<(), Error> {
     stdout.send(format_sstr!("date {date_str}"));
 
     for log_dir in LOG_DIRS {
-        let log_path = HOME_DIR.join("log").join(&format_sstr!("{log_dir}.log"));
+        let log_path = HOME_DIR.join("log").join(format_sstr!("{log_dir}.log"));
         if log_path.exists() {
             let new_path = HOME_DIR
                 .join("log")
-                .join(&format_sstr!("{log_dir}_{date_str}.log"));
+                .join(format_sstr!("{log_dir}_{date_str}.log"));
             stdout.send(format_sstr!("mv/gzip {log_path:?} {new_path:?}"));
             fs::rename(&log_path, &new_path).await?;
             let status = Command::new("gzip").args([&new_path]).status().await?;
             if !status.success() {
-                let code = status.code().ok_or_else(|| {
-                    format_err!(
-                        "No status code"
-                    )
-                })?;
+                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
                 stdout.send(format_sstr!("gzip failed with {code}"));
             }
         }
@@ -91,7 +68,7 @@ async fn main() -> Result<(), Error> {
         return Err(format_err!("apt-get update failed with {code}"));
     }
     let status = Command::new(&config.send_to_telegram_path)
-        .args(&[
+        .args([
             "-r",
             "ddboline",
             "-m",
@@ -124,7 +101,7 @@ async fn main() -> Result<(), Error> {
     }
     if hostname == "dilepton-tower" {
         let status = Command::new("sudo")
-            .args(&["modprobe", "vboxdrv"])
+            .args(["modprobe", "vboxdrv"])
             .status()
             .await?;
         if !status.success() {
@@ -135,14 +112,16 @@ async fn main() -> Result<(), Error> {
         if postgres_toml.exists() {
             let postgres_toml = postgres_toml.to_string_lossy();
             let p = Command::new(&config.backup_app_path)
-                .args(&["backup", "-f", &postgres_toml])
+                .args(["backup", "-f", &postgres_toml])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?;
             let status = process_child(p, &stdout).await?;
             if !status.success() {
                 let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-                return Err(format_err!("backup_app_rust postgres.toml failed with {code}"));
+                return Err(format_err!(
+                    "backup_app_rust postgres.toml failed with {code}"
+                ));
             }
         }
     }
@@ -152,19 +131,21 @@ async fn main() -> Result<(), Error> {
     if postgres_local_toml.exists() {
         let postgres_local_toml = postgres_local_toml.to_string_lossy();
         let p = Command::new(&config.backup_app_path)
-            .args(&["backup", "-f", &postgres_local_toml])
+            .args(["backup", "-f", &postgres_local_toml])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
         let status = process_child(p, &stdout).await?;
         if !status.success() {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-            return Err(format_err!("backup_app_rust postgres_local.toml failed with {code}"));
+            return Err(format_err!(
+                "backup_app_rust postgres_local.toml failed with {code}"
+            ));
         }
     }
     if config.dropbox_path.exists() {
         let status = Command::new(&config.dropbox_path)
-            .args(&["start"])
+            .args(["start"])
             .status()
             .await?;
         if !status.success() {
@@ -173,7 +154,7 @@ async fn main() -> Result<(), Error> {
         }
     }
     let status = Command::new(&config.send_to_telegram_path)
-        .args(&[
+        .args([
             "-r",
             "ddboline",
             "-m",
@@ -185,6 +166,7 @@ async fn main() -> Result<(), Error> {
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
+    update_repos(&config, &stdout).await?;
     stdout.close().await?;
     Ok(())
 }
