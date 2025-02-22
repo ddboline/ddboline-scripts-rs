@@ -1,6 +1,7 @@
 [package]
 name = "ddboline-scripts-rs"
 version = "0.1.0"
+authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2021"
 
 [dependencies]
