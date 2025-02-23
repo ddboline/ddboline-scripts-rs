@@ -80,21 +80,13 @@ async fn main() -> Result<(), Error> {
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
-    let p = Command::new("sudo")
-        .args([
-            "apt-get",
-            "-o",
-            "Dpkg::Options::=--force-confold",
-            "-o",
-            "Dpkg::Options::=--force-confdef",
-            "-y",
-            "dist-upgrade",
-        ])
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let status = process_child(p, &stdout).await?;
+    let status = Command::new("sudo")
+        .args(["apt-get", "dist-upgrade"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit())
+        .status()
+        .await?;
     if !status.success() {
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
         return Err(format_err!("apt-get dist-upgrade failed with {code}"));
