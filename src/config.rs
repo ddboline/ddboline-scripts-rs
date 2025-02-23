@@ -47,6 +47,26 @@ pub struct ConfigInner {
     pub repo_directories: Vec<StackString>,
     #[serde(default = "Vec::new")]
     pub architectures: Vec<StackString>,
+    #[serde(default = "default_repo_directory")]
+    pub repo_directory: PathBuf,
+    #[serde(default = "default_repo_deb_directory")]
+    pub repo_deb_directory: PathBuf,
+    #[serde(default = "default_reprepro_path")]
+    pub reprepro_path: PathBuf,
+    pub repo_bucket: Option<StackString>,
+    pub aws_path: Option<PathBuf>,
+}
+
+fn default_reprepro_path() -> PathBuf {
+    BIN_DIR.join("reprepro")
+}
+
+fn default_repo_directory() -> PathBuf {
+    HOME_DIR.join("repositories")
+}
+
+fn default_repo_deb_directory() -> PathBuf {
+    HOME_DIR.join("setup_files").join("deb").join("py2deb3")
 }
 
 fn default_workspace_path() -> PathBuf {
