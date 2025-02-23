@@ -8,9 +8,7 @@ use anyhow::Error;
 use stack_string::StackString;
 use stdout_channel::StdoutChannel;
 
-use ddboline_scripts_rs::{
-    authenticate, config::Config
-};
+use ddboline_scripts_rs::{authenticate, config::Config};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

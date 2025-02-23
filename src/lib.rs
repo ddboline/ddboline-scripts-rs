@@ -14,25 +14,24 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
+    sync::LazyLock,
     time::UNIX_EPOCH,
 };
 use stdout_channel::StdoutChannel;
+use time::{macros::format_description, Duration, OffsetDateTime};
+use time_tz::{timezones::db::UTC, OffsetDateTimeExt, Tz};
 use tokio::{
     fs,
     io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::{Child, Command},
     task::{spawn, JoinHandle},
 };
-use time::{macros::format_description, OffsetDateTime, Duration};
-use time_tz::{OffsetDateTimeExt, Tz, timezones::db::UTC};
-use std::sync::LazyLock;
 
 use config::{Config, CONFIG_DIR, HOME_DIR};
 
 static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
 const LOG_DIRS: [&str; 2] = ["crontab", "crontab_aws"];
-
 
 /// # Errors
 /// Return error if callback function returns error after timeout
@@ -346,7 +345,12 @@ pub async fn check_repo(
     Ok(())
 }
 
-pub async fn authenticate(config: &Config, stdout: &StdoutChannel<StackString>) -> Result<(), Error> {
+/// # Errors
+/// Return error if callback function returns error after timeout
+pub async fn authenticate(
+    config: &Config,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
     let hostname: StackString = get_first_line_of_file(Path::new("/etc/hostname"))
         .await?
         .trim()
@@ -383,7 +387,7 @@ pub async fn authenticate(config: &Config, stdout: &StdoutChannel<StackString>) 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let status = process_child(p, &stdout).await?;
+    let status = process_child(p, stdout).await?;
     if !status.success() {
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
         return Err(format_err!("apt-get update failed with {code}"));
@@ -429,7 +433,7 @@ pub async fn authenticate(config: &Config, stdout: &StdoutChannel<StackString>) 
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?;
-            let status = process_child(p, &stdout).await?;
+            let status = process_child(p, stdout).await?;
             if !status.success() {
                 let code = status.code().ok_or_else(|| format_err!("No status code"))?;
                 return Err(format_err!(
@@ -448,7 +452,7 @@ pub async fn authenticate(config: &Config, stdout: &StdoutChannel<StackString>) 
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        let status = process_child(p, &stdout).await?;
+        let status = process_child(p, stdout).await?;
         if !status.success() {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             return Err(format_err!(
@@ -479,11 +483,13 @@ pub async fn authenticate(config: &Config, stdout: &StdoutChannel<StackString>) 
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
-    update_repos(&config, &stdout).await?;
+    update_repos(config, stdout).await?;
 
     Ok(())
 }
 
+/// # Errors
+/// Return error if callback function returns error after timeout
 pub async fn system_stats(config: &Config) -> Result<(), Error> {
     let weather = if config.weather_util_path.exists() {
         Some(

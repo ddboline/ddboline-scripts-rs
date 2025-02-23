@@ -2,8 +2,7 @@
 
 use anyhow::Error;
 
-use ddboline_scripts_rs::config::Config;
-use ddboline_scripts_rs::system_stats;
+use ddboline_scripts_rs::{config::Config, system_stats};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
