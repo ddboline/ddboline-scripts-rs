@@ -414,7 +414,7 @@ pub async fn authenticate(
         .await?;
     if !status.success() {
         let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-        return Err(format_err!("apt-get dist-upgrade failed with {code}"));
+        error!("apt-get dist-upgrade failed with {code}");
     }
     if hostname == "dilepton-tower" {
         let status = Command::new("sudo")
