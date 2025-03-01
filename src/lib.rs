@@ -490,7 +490,7 @@ pub async fn authenticate(
 
 /// # Errors
 /// Return error if callback function returns error after timeout
-pub async fn system_stats(config: &Config) -> Result<(), Error> {
+pub async fn system_stats(config: &Config, stdout: &StdoutChannel<StackString>) -> Result<(), Error> {
     let weather = if config.weather_util_path.exists() {
         Some(
             Command::new(&config.weather_util_path)
@@ -552,20 +552,20 @@ pub async fn system_stats(config: &Config) -> Result<(), Error> {
     let uptime_seconds = uptime.whole_seconds();
     let uptime_str = uptime_str.join(" ");
 
-    println!("Uptime {uptime_seconds} seconds or {uptime_str}");
-    println!("Temperature {temp} C  CpuFreq {freq} MHz");
+    stdout.send(format_sstr!("Uptime {uptime_seconds} seconds or {uptime_str}"));
+    stdout.send(format_sstr!("Temperature {temp} C  CpuFreq {freq} MHz"));
 
     if let Some(weather) = weather {
-        println!("\nWeather:");
+        stdout.send(format_sstr!("\nWeather:"));
         let output = weather.wait_with_output().await?;
         let output = StackString::from_utf8_lossy(&output.stdout);
-        println!("{output}");
+        stdout.send(format_sstr!("{output}"));
     }
     if let Some(calendar) = calendar {
-        println!("\nAgenda:");
+        stdout.send(format_sstr!("\nAgenda:"));
         let output = calendar.wait_with_output().await?;
         let output = StackString::from_utf8_lossy(&output.stdout);
-        println!("{output}");
+        stdout.send(format_sstr!("{output}"));
     }
     Ok(())
 }
