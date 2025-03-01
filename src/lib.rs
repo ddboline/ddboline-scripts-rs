@@ -239,10 +239,10 @@ pub async fn check_repo(
     for distro in &config.distros {
         for dir in &config.repo_directories {
             let distro_directory = config.repo_deb_directory.join(distro).join(dir);
-            stdout.send(format_sstr!("distro_deb directory {distro_directory:?}"));
             if !distro_directory.exists() {
                 continue;
             }
+            stdout.send(format_sstr!("distro_deb directory {distro}"));
             let mut filemap: HashMap<StackString, BTreeSet<(u64, PathBuf)>> = HashMap::new();
             let mut stream = fs::read_dir(&distro_directory).await?;
             while let Some(entry) = stream.next_entry().await? {
