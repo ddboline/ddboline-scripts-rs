@@ -10,5 +10,7 @@ async fn main() -> Result<(), Error> {
     let config = Config::init_config()?;
 
     check_repo(&config, &stdout, false, false).await?;
+
+    stdout.close().await?;
     Ok(())
 }
