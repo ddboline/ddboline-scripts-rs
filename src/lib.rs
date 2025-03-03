@@ -625,6 +625,8 @@ impl SystemctlStatus {
     }
 }
 
+/// # Errors
+/// Return error if callback function returns error after timeout
 pub async fn list_running_services(
     config: &Config,
     stdout: &StdoutChannel<StackString>,
