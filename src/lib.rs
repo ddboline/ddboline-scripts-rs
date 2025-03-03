@@ -11,7 +11,8 @@ use log::{debug, error};
 use smallvec::SmallVec;
 use stack_string::{format_sstr, StackString};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
+    fmt,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::LazyLock,
@@ -492,7 +493,10 @@ pub async fn authenticate(
 
 /// # Errors
 /// Return error if callback function returns error after timeout
-pub async fn system_stats(config: &Config, stdout: &StdoutChannel<StackString>) -> Result<(), Error> {
+pub async fn system_stats(
+    config: &Config,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
     let weather = if config.weather_util_path.exists() {
         Some(
             Command::new(&config.weather_util_path)
@@ -554,7 +558,9 @@ pub async fn system_stats(config: &Config, stdout: &StdoutChannel<StackString>) 
     let uptime_seconds = uptime.whole_seconds();
     let uptime_str = uptime_str.join(" ");
 
-    stdout.send(format_sstr!("Uptime {uptime_seconds} seconds or {uptime_str}"));
+    stdout.send(format_sstr!(
+        "Uptime {uptime_seconds} seconds or {uptime_str}"
+    ));
     stdout.send(format_sstr!("Temperature {temp} C  CpuFreq {freq} MHz"));
 
     if let Some(weather) = weather {
@@ -572,16 +578,93 @@ pub async fn system_stats(config: &Config, stdout: &StdoutChannel<StackString>) 
     Ok(())
 }
 
-pub async fn list_running_services(config: &Config, stdout: &StdoutChannel<StackString>) -> Result<(), Error> {
+#[derive(Debug)]
+struct SystemctlStatus {
+    unit: StackString,
+    load: StackString,
+    active: StackString,
+    sub: StackString,
+    description: StackString,
+}
+
+impl fmt::Display for SystemctlStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{unit} {load} {active} {sub} {description}",
+            unit = self.unit,
+            load = self.load,
+            active = self.active,
+            sub = self.sub,
+            description = self.description
+        )
+    }
+}
+
+pub async fn list_running_services(
+    config: &Config,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
+    let units: HashMap<StackString, StackString> = config
+        .systemd_services
+        .iter()
+        .map(|s| (format_sstr!("{s}.service"), s.clone()))
+        .collect();
     let output = Command::new("systemctl").output().await?;
     let output = StackString::from_utf8_lossy(&output.stdout);
-    for line in output.split('\n') {
-        for service in &config.systemd_services {
-            if line.contains(service.as_str()) {
-                stdout.send(line);
-                break
+
+    let statuses: Vec<SystemctlStatus> = output
+        .split('\n')
+        .filter_map(|line| {
+            let mut it = line.split_ascii_whitespace();
+            let service = it.next().unwrap_or("").into();
+            if let Some(unit) = units.get(service) {
+                let unit = unit.into();
+                let load = it.next().unwrap_or("").into();
+                let active = it.next().unwrap_or("").into();
+                let sub = it.next().unwrap_or("").into();
+                let mut description = StackString::new();
+                for x in it {
+                    description.push_str(x);
+                    description.push_str(" ");
+                }
+                let description = description.trim().into();
+                Some(SystemctlStatus {
+                    unit,
+                    load,
+                    active,
+                    sub,
+                    description,
+                })
+            } else {
+                None
             }
+        })
+        .collect();
+
+    let max_unit = statuses.iter().map(|s| s.unit.len()).max().unwrap_or(0);
+    let max_active = statuses.iter().map(|s| s.active.len()).max().unwrap_or(0);
+    let max_description = statuses
+        .iter()
+        .map(|s| s.description.len())
+        .max()
+        .unwrap_or(0);
+
+    for status in statuses {
+        fn fixed_size(input: &str, size: usize) -> StackString {
+            let mut s = StackString::new();
+            s.push_str(input);
+            while s.len() < size {
+                s.push_str(" ");
+            }
+            s
         }
+
+        let unit = fixed_size(&status.unit, max_unit + 1);
+        let active = fixed_size(&status.active, max_active + 1);
+        let description = fixed_size(&status.description, max_description + 1);
+
+        stdout.send(format_sstr!("{unit} {description} {active} "));
     }
     Ok(())
 }
