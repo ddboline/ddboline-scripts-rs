@@ -7,7 +7,7 @@
 pub mod config;
 
 use anyhow::{format_err, Error};
-use log::{debug, error};
+use log::error;
 use smallvec::SmallVec;
 use stack_string::{format_sstr, StackString};
 use std::{
@@ -36,7 +36,7 @@ const LOG_DIRS: [&str; 2] = ["crontab", "crontab_aws"];
 
 /// # Errors
 /// Return error if callback function returns error after timeout
-pub async fn get_first_line_of_file(fpath: &Path) -> Result<String, Error> {
+pub async fn get_first_line_of_file(fpath: &Path) -> Result<StackString, Error> {
     let mut buf = String::new();
     if fpath.exists() {
         if let Ok(f) = fs::File::open(fpath).await {
@@ -44,65 +44,53 @@ pub async fn get_first_line_of_file(fpath: &Path) -> Result<String, Error> {
             buf_read.read_line(&mut buf).await?;
         }
     }
+    let buf = buf.trim().into();
     Ok(buf)
 }
 
 /// # Errors
 /// Return error if callback function returns error after timeout
-pub async fn output_to_stdout(
+pub async fn process_reader(
     mut reader: BufReader<impl AsyncRead + Unpin>,
+    eol: u8,
+    f: impl Fn(&[u8]),
+) -> Result<(), Error> {
+    let mut buf = Vec::new();
+    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
+        if bytes > 0 {
+            f(&buf);
+        } else {
+            break;
+        }
+        buf.clear();
+    }
+    Ok(())
+}
+
+/// # Errors
+/// Return error if callback function returns error after timeout
+pub async fn output_to_stdout(
+    reader: BufReader<impl AsyncRead + Unpin>,
     eol: u8,
     stdout: &StdoutChannel<StackString>,
 ) -> Result<(), Error> {
-    let mut buf = Vec::new();
-    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
-        if bytes > 0 {
-            stdout.send(format_sstr!(
-                "{}",
-                String::from_utf8_lossy(&buf).trim_end_matches('\n')
-            ));
-        } else {
-            break;
-        }
-        buf.clear();
-    }
-    Ok(())
+    process_reader(reader, eol, |v| {
+        stdout.send(String::from_utf8_lossy(v).trim_end_matches('\n'));
+    })
+    .await
 }
 
 /// # Errors
 /// Return error if callback function returns error after timeout
-pub async fn output_to_debug(
-    mut reader: BufReader<impl AsyncRead + Unpin>,
+pub async fn output_to_stderr(
+    reader: BufReader<impl AsyncRead + Unpin>,
     eol: u8,
+    stdout: &StdoutChannel<StackString>,
 ) -> Result<(), Error> {
-    let mut buf = Vec::new();
-    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
-        if bytes > 0 {
-            debug!("{}", String::from_utf8_lossy(&buf));
-        } else {
-            break;
-        }
-        buf.clear();
-    }
-    Ok(())
-}
-
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn output_to_error(
-    mut reader: BufReader<impl AsyncRead + Unpin>,
-    eol: u8,
-) -> Result<(), Error> {
-    let mut buf = Vec::new();
-    while let Ok(bytes) = reader.read_until(eol, &mut buf).await {
-        if bytes > 0 {
-            error!("{}", String::from_utf8_lossy(&buf));
-        } else {
-            break;
-        }
-        buf.clear();
-    }
-    Ok(())
+    process_reader(reader, eol, |v| {
+        stdout.send_err(String::from_utf8_lossy(v).trim_end_matches('\n'));
+    })
+    .await
 }
 
 /// # Errors
@@ -113,13 +101,16 @@ pub async fn process_child(
 ) -> Result<ExitStatus, Error> {
     let stdout = p.stdout.take().ok_or_else(|| format_err!("No Stdout"))?;
     let stderr = p.stderr.take().ok_or_else(|| format_err!("No Stderr"))?;
-    let reader = BufReader::new(stdout);
-    let stdout_channel = stdout_channel.clone();
-    let stdout_task: JoinHandle<Result<(), Error>> =
-        spawn(async move { output_to_stdout(reader, b'\n', &stdout_channel).await });
-    let reader = BufReader::new(stderr);
-    let stderr_task: JoinHandle<Result<(), Error>> =
-        spawn(async move { output_to_error(reader, b'\n').await });
+    let stdout_task: JoinHandle<Result<(), Error>> = {
+        let reader = BufReader::new(stdout);
+        let stdout_channel = stdout_channel.clone();
+        spawn(async move { output_to_stdout(reader, b'\n', &stdout_channel).await })
+    };
+    let stderr_task: JoinHandle<Result<(), Error>> = {
+        let reader = BufReader::new(stderr);
+        let stdout_channel = stdout_channel.clone();
+        spawn(async move { output_to_stderr(reader, b'\n', &stdout_channel).await })
+    };
     let status = p.wait().await?;
     stdout_task.await??;
     stderr_task.await??;
@@ -354,10 +345,7 @@ pub async fn authenticate(
     config: &Config,
     stdout: &StdoutChannel<StackString>,
 ) -> Result<(), Error> {
-    let hostname: StackString = get_first_line_of_file(Path::new("/etc/hostname"))
-        .await?
-        .trim()
-        .into();
+    let hostname = get_first_line_of_file(Path::new("/etc/hostname")).await?;
     stdout.send(format_sstr!("hostname {hostname}"));
 
     let current_date = OffsetDateTime::now_utc();
@@ -521,12 +509,10 @@ pub async fn system_stats(
 
     let freq: i64 = get_first_line_of_file(&config.frequency_path)
         .await?
-        .trim()
         .parse()
         .unwrap_or(0);
     let temp: i64 = get_first_line_of_file(&config.temperature_path)
         .await?
-        .trim()
         .parse()
         .unwrap_or(0);
     let freq = freq / 1000;
@@ -579,15 +565,15 @@ pub async fn system_stats(
 }
 
 #[derive(Debug)]
-struct SystemctlStatus {
-    unit: StackString,
-    load: StackString,
-    active: StackString,
-    sub: StackString,
-    description: StackString,
+struct SystemctlStatus<'a> {
+    unit: &'a str,
+    load: &'a str,
+    active: &'a str,
+    sub: &'a str,
+    description: &'a str,
 }
 
-impl fmt::Display for SystemctlStatus {
+impl fmt::Display for SystemctlStatus<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -601,20 +587,35 @@ impl fmt::Display for SystemctlStatus {
     }
 }
 
-impl SystemctlStatus {
-    fn from_systemctl_line(line: &str, units: &HashMap<StackString, StackString>) -> Option<Self> {
+impl<'a> SystemctlStatus<'a> {
+    fn from_systemctl_line(
+        line: &'a str,
+        units: &'a HashMap<StackString, impl AsRef<str>>,
+    ) -> Option<Self> {
         let mut it = line.split_ascii_whitespace();
-        let service = it.next().unwrap_or("");
-        let unit = units.get(service)?.into();
-        let load = it.next().unwrap_or("").into();
-        let active = it.next().unwrap_or("").into();
-        let sub = it.next().unwrap_or("").into();
-        let mut description = StackString::new();
-        for x in it {
-            description.push_str(x);
-            description.push_str(" ");
-        }
-        let description = description.trim().into();
+        let service = it.next()?;
+
+        let mut start_index = line.find(service)?;
+
+        let unit = units.get(service)?.as_ref();
+        let load = it.next()?;
+
+        start_index += line.split_at_checked(start_index)?.1.find(load)?;
+
+        let active = it.next()?;
+
+        start_index += line.split_at_checked(start_index)?.1.find(active)?;
+
+        let sub = it.next()?;
+
+        start_index += line.split_at_checked(start_index)?.1.find(sub)?;
+
+        let next = it.next()?;
+
+        start_index += line.split_at_checked(start_index)?.1.find(next)?;
+
+        let description = line.split_at_checked(start_index)?.1.trim();
+
         Some(SystemctlStatus {
             unit,
             load,
@@ -631,10 +632,10 @@ pub async fn list_running_services(
     config: &Config,
     stdout: &StdoutChannel<StackString>,
 ) -> Result<(), Error> {
-    let units: HashMap<StackString, StackString> = config
+    let units: HashMap<StackString, &str> = config
         .systemd_services
         .iter()
-        .map(|s| (format_sstr!("{s}.service"), s.clone()))
+        .map(|s| (format_sstr!("{s}.service"), s.as_str()))
         .collect();
     let output = Command::new("systemctl").output().await?;
     let output = StackString::from_utf8_lossy(&output.stdout);
@@ -662,9 +663,9 @@ pub async fn list_running_services(
             s
         }
 
-        let unit = fixed_size(&status.unit, max_unit + 1);
-        let active = fixed_size(&status.active, max_active + 1);
-        let description = fixed_size(&status.description, max_description + 1);
+        let unit = fixed_size(status.unit, max_unit + 1);
+        let active = fixed_size(status.active, max_active + 1);
+        let description = fixed_size(status.description, max_description + 1);
 
         stdout.send(format_sstr!("{unit} {description} {active} "));
     }
