@@ -1,6 +1,6 @@
 [package]
 name = "ddboline-scripts-rs"
-version = "0.1.6"
+version = "0.1.7"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2021"
 
@@ -54,4 +54,9 @@ doc = false
 [[bin]]
 name = "setup-repos-rs"
 path = "src/setup_repos.rs"
+doc = false
+
+[[bin]]
+name = "list-running-services-rs"
+path = "src/list_running_services.rs"
 doc = false

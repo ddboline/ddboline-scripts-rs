@@ -11,7 +11,7 @@ use log::{debug, error};
 use smallvec::SmallVec;
 use stack_string::{format_sstr, StackString};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::LazyLock,
@@ -568,6 +568,20 @@ pub async fn system_stats(config: &Config, stdout: &StdoutChannel<StackString>) 
         let output = calendar.wait_with_output().await?;
         let output = StackString::from_utf8_lossy(&output.stdout);
         stdout.send(format_sstr!("{output}"));
+    }
+    Ok(())
+}
+
+pub async fn list_running_services(config: &Config, stdout: &StdoutChannel<StackString>) -> Result<(), Error> {
+    let output = Command::new("systemctl").output().await?;
+    let output = StackString::from_utf8_lossy(&output.stdout);
+    for line in output.split('\n') {
+        for service in &config.systemd_services {
+            if line.contains(service.as_str()) {
+                stdout.send(line);
+                break
+            }
+        }
     }
     Ok(())
 }
