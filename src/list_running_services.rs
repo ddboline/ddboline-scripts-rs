@@ -1,9 +1,8 @@
 use anyhow::Error;
-use stdout_channel::StdoutChannel;
 use stack_string::StackString;
+use stdout_channel::StdoutChannel;
 
-use ddboline_scripts_rs::list_running_services;
-use ddboline_scripts_rs::config::Config;
+use ddboline_scripts_rs::{config::Config, list_running_services};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

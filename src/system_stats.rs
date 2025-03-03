@@ -1,8 +1,8 @@
 #![allow(clippy::semicolon_if_nothing_returned)]
 
 use anyhow::Error;
-use stdout_channel::StdoutChannel;
 use stack_string::StackString;
+use stdout_channel::StdoutChannel;
 
 use ddboline_scripts_rs::{config::Config, system_stats};
 
