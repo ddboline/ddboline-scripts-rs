@@ -601,6 +601,30 @@ impl fmt::Display for SystemctlStatus {
     }
 }
 
+impl SystemctlStatus {
+    fn from_systemctl_line(line: &str, units: &HashMap<StackString, StackString>) -> Option<Self> {
+        let mut it = line.split_ascii_whitespace();
+        let service = it.next().unwrap_or("");
+        let unit = units.get(service)?.into();
+        let load = it.next().unwrap_or("").into();
+        let active = it.next().unwrap_or("").into();
+        let sub = it.next().unwrap_or("").into();
+        let mut description = StackString::new();
+        for x in it {
+            description.push_str(x);
+            description.push_str(" ");
+        }
+        let description = description.trim().into();
+        Some(SystemctlStatus {
+            unit,
+            load,
+            active,
+            sub,
+            description,
+        })
+    }
+}
+
 pub async fn list_running_services(
     config: &Config,
     stdout: &StdoutChannel<StackString>,
@@ -615,31 +639,7 @@ pub async fn list_running_services(
 
     let statuses: Vec<SystemctlStatus> = output
         .split('\n')
-        .filter_map(|line| {
-            let mut it = line.split_ascii_whitespace();
-            let service = it.next().unwrap_or("").into();
-            if let Some(unit) = units.get(service) {
-                let unit = unit.into();
-                let load = it.next().unwrap_or("").into();
-                let active = it.next().unwrap_or("").into();
-                let sub = it.next().unwrap_or("").into();
-                let mut description = StackString::new();
-                for x in it {
-                    description.push_str(x);
-                    description.push_str(" ");
-                }
-                let description = description.trim().into();
-                Some(SystemctlStatus {
-                    unit,
-                    load,
-                    active,
-                    sub,
-                    description,
-                })
-            } else {
-                None
-            }
-        })
+        .filter_map(|line| SystemctlStatus::from_systemctl_line(line, &units))
         .collect();
 
     let max_unit = statuses.iter().map(|s| s.unit.len()).max().unwrap_or(0);
