@@ -1,6 +1,6 @@
 [package]
 name = "ddboline-scripts-rs"
-version = "0.1.10"
+version = "0.1.11"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2021"
 
@@ -22,7 +22,7 @@ serde = "1.0"
 smallvec = "1.0"
 stack-string = { git = "https://github.com/ddboline/stack-string-rs.git", features=["postgres_types"], tag="1.0.2" }
 stdout-channel = "0.6"
-tokio = {version="1.43", features=["rt", "macros", "rt-multi-thread", "fs", "io-util", "process", "time"]}
+tokio = {version="1.44", features=["rt", "macros", "rt-multi-thread", "fs", "io-util", "process", "time"]}
 time = {version="0.3", features=["serde-human-readable", "macros", "formatting"]}
 time-tz = {version="2.0", features=["system"]}
 
@@ -59,4 +59,9 @@ doc = false
 [[bin]]
 name = "list-running-services-rs"
 path = "src/list_running_services.rs"
+doc = false
+
+[[bin]]
+name = "restart-auth-server-rs"
+path = "src/restart_auth_server.rs"
 doc = false

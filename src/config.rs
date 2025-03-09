@@ -55,6 +55,10 @@ pub struct ConfigInner {
     pub reprepro_path: PathBuf,
     pub repo_bucket: Option<StackString>,
     pub aws_path: Option<PathBuf>,
+    #[serde(default = "default_secret_path")]
+    pub secret_path: PathBuf,
+    #[serde(default = "default_secret_path")]
+    pub jwt_secret_path: PathBuf,
 }
 
 fn default_reprepro_path() -> PathBuf {
@@ -107,6 +111,13 @@ fn default_temperature_path() -> PathBuf {
 
 fn default_uptime_path() -> PathBuf {
     Path::new("/proc/uptime").to_path_buf()
+}
+
+fn default_secret_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| "/home/ubuntu/.config".into())
+        .join("auth_server_rust")
+        .join("secret.bin")
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]

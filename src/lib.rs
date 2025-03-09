@@ -672,6 +672,8 @@ pub async fn list_running_services(
     Ok(())
 }
 
+/// # Errors
+/// Return error if callback function returns error after timeout
 pub async fn clear_secrets_restart_systemd(
     config: &Config,
     stdout: &StdoutChannel<StackString>,
@@ -692,11 +694,16 @@ pub async fn clear_secrets_restart_systemd(
         return Ok(());
     }
     if config.secret_path.exists() {
-        fs::remove_file(&config.secret_path).await?;
+        let p = &config.secret_path;
+        stdout.send(format_sstr!("remove {p:?}"));
+        fs::remove_file(p).await?;
     }
     if config.jwt_secret_path.exists() {
-        fs::remove_file(&config.jwt_secret_path).await?;
+        let p = &config.jwt_secret_path;
+        stdout.send(format_sstr!("remove {p:?}"));
+        fs::remove_file(p).await?;
     }
+    stdout.send(format_sstr!("restart auth-server-rust"));
     let status = Command::new("sudo")
         .args(["systemctl", "restart", "auth-server-rust"])
         .stdout(Stdio::inherit())
@@ -710,6 +717,7 @@ pub async fn clear_secrets_restart_systemd(
     }
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
     for service in services {
+        stdout.send(format_sstr!("restart {service}"));
         let status = Command::new("sudo")
             .args(["systemctl", "restart", service])
             .stdout(Stdio::inherit())
