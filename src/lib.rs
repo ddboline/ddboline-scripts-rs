@@ -671,3 +671,56 @@ pub async fn list_running_services(
     }
     Ok(())
 }
+
+pub async fn clear_secrets_restart_systemd(
+    config: &Config,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
+    let services: Vec<_> = config
+        .systemd_services
+        .iter()
+        .filter_map(|s| {
+            if s.as_str() == "nginx" {
+                None
+            } else {
+                Some(s.as_str())
+            }
+        })
+        .collect();
+    if !services.contains(&"auth-server-rust") {
+        stdout.send_err("auth server not found");
+        return Ok(());
+    }
+    if config.secret_path.exists() {
+        fs::remove_file(&config.secret_path).await?;
+    }
+    if config.jwt_secret_path.exists() {
+        fs::remove_file(&config.jwt_secret_path).await?;
+    }
+    let status = Command::new("sudo")
+        .args(["systemctl", "restart", "auth-server-rust"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit())
+        .status()
+        .await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        error!("systemctl restart auth-server-rust failed with code {code}");
+    }
+    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    for service in services {
+        let status = Command::new("sudo")
+            .args(["systemctl", "restart", service])
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdin(Stdio::inherit())
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            error!("systemctl restart {service} failed with code {code}");
+        }
+    }
+    Ok(())
+}
