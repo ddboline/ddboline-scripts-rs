@@ -475,6 +475,24 @@ pub async fn authenticate(
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
     update_repos(config, stdout).await?;
+    if hostname != "dilepton-tower" {
+        let postgres_toml = CONFIG_DIR.join("backup_app_rust").join("postgres.toml");
+        if postgres_toml.exists() {
+            let postgres_toml = postgres_toml.to_string_lossy();
+            let p = Command::new(&config.backup_app_path)
+                .args(["restore", "-f", &postgres_toml, "-k", "movie_collection_rust"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            let status = process_child(p, stdout).await?;
+            if !status.success() {
+                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                return Err(format_err!(
+                    "backup_app_rust postgres.toml failed with {code}"
+                ));
+            }
+        }
+    }
 
     Ok(())
 }
