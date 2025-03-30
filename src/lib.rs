@@ -6,10 +6,10 @@
 
 pub mod config;
 
-use anyhow::{format_err, Error};
+use anyhow::{Error, format_err};
 use log::error;
 use smallvec::SmallVec;
-use stack_string::{format_sstr, StackString};
+use stack_string::{StackString, format_sstr};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt,
@@ -19,16 +19,16 @@ use std::{
     time::UNIX_EPOCH,
 };
 use stdout_channel::StdoutChannel;
-use time::{macros::format_description, Duration, OffsetDateTime};
-use time_tz::{timezones::db::UTC, OffsetDateTimeExt, Tz};
+use time::{Duration, OffsetDateTime, macros::format_description};
+use time_tz::{OffsetDateTimeExt, Tz, timezones::db::UTC};
 use tokio::{
     fs,
     io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::{Child, Command},
-    task::{spawn, JoinHandle},
+    task::{JoinHandle, spawn},
 };
 
-use config::{Config, CONFIG_DIR, HOME_DIR};
+use config::{CONFIG_DIR, Config, HOME_DIR};
 
 static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
@@ -480,7 +480,13 @@ pub async fn authenticate(
         if postgres_toml.exists() {
             let postgres_toml = postgres_toml.to_string_lossy();
             let p = Command::new(&config.backup_app_path)
-                .args(["restore", "-f", &postgres_toml, "-k", "movie_collection_rust"])
+                .args([
+                    "restore",
+                    "-f",
+                    &postgres_toml,
+                    "-k",
+                    "movie_collection_rust",
+                ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?;

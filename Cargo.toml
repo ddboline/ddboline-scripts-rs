@@ -2,7 +2,7 @@
 name = "ddboline-scripts-rs"
 version = "0.1.12"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [package.metadata.deb]
 name = "ddboline-scripts-rs"
