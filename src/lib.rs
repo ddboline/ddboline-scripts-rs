@@ -235,7 +235,7 @@ pub async fn check_repo(
                 continue;
             }
             let devel_directory = config
-                .repo_directory
+                .repo_deb_directory
                 .join(distro)
                 .join(format_sstr!("devel_{dir}"));
             if devel_directory.exists() {
