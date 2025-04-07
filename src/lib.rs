@@ -244,7 +244,7 @@ pub async fn check_repo(
                     let path = entry.path();
                     if let Some(ext) = path.extension() {
                         let p = ext.to_string_lossy();
-                        if !p.ends_with(".deb") {
+                        if p != "deb" {
                             continue;
                         }
                         if let Some(filename) = path.file_name() {
