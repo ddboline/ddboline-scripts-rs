@@ -234,6 +234,30 @@ pub async fn check_repo(
             if !distro_directory.exists() {
                 continue;
             }
+            let devel_directory = config
+                .repo_directory
+                .join(distro)
+                .join(format_sstr!("devel_{dir}"));
+            if devel_directory.exists() {
+                let mut stream = fs::read_dir(&devel_directory).await?;
+                while let Some(entry) = stream.next_entry().await? {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension() {
+                        let p = ext.to_string_lossy();
+                        if !p.ends_with(".deb") {
+                            continue;
+                        }
+                        if let Some(filename) = path.file_name() {
+                            let filename = StackString::from_display(filename.to_string_lossy());
+                            stdout.send(format_sstr!("devel {p} {filename}"));
+                            if do_cleanup {
+                                let final_path = distro_directory.join(filename);
+                                fs::rename(path, final_path).await?;
+                            }
+                        }
+                    }
+                }
+            }
             stdout.send(format_sstr!("distro_deb directory {distro}"));
             let mut filemap: HashMap<StackString, BTreeSet<(u64, PathBuf)>> = HashMap::new();
             let mut stream = fs::read_dir(&distro_directory).await?;
