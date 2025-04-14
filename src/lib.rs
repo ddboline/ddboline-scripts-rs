@@ -33,7 +33,7 @@ use config::{CONFIG_DIR, Config, HOME_DIR};
 
 static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
-const LOG_DIRS: [&str; 2] = ["crontab", "crontab_aws"];
+const LOG_DIRS: [&str; 3] = ["crontab", "crontab_aws", "crontab_root"];
 
 /// # Errors
 /// Return error if callback function returns error after timeout
@@ -384,6 +384,20 @@ pub async fn authenticate(
 
     let date_str = current_date.to_timezone(*LOCAL_TZ).format(format)?;
     stdout.send(format_sstr!("date {date_str}"));
+
+    let root_log_path = "/tmp/crontab_root.log";
+    if Path::new(root_log_path).exists() {
+        let final_path = HOME_DIR.join("log").join(format_sstr!("crontab_root.log"));
+        let final_path = final_path.to_string_lossy();
+        let status = Command::new("cp")
+            .args([root_log_path, &final_path])
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            stdout.send(format_sstr!("copy failed with {code}"));
+        }
+    }
 
     for log_dir in LOG_DIRS {
         let log_path = HOME_DIR.join("log").join(format_sstr!("{log_dir}.log"));
