@@ -12,8 +12,9 @@ use smallvec::SmallVec;
 use stack_string::{StackString, format_sstr};
 use std::{
     collections::{BTreeSet, HashMap},
+    ffi::OsStr,
     fmt,
-    path::{Path, PathBuf},
+    path::Path,
     process::{ExitStatus, Stdio},
     sync::LazyLock,
     time::UNIX_EPOCH,
@@ -37,15 +38,25 @@ const LOG_DIRS: [&str; 2] = ["crontab", "crontab_aws"];
 /// # Errors
 /// Return error if callback function returns error after timeout
 pub async fn get_first_line_of_file(fpath: &Path) -> Result<StackString, Error> {
-    let mut buf = String::new();
-    if fpath.exists() {
+    if !fpath.exists() {
+        return Ok(StackString::new());
+    }
+    let metadata_len = fs::metadata(&fpath).await?.len();
+    if metadata_len < 1024 {
+        let mut buf = fs::read_to_string(&fpath).await?;
+        let endbyte = buf.find('\n').unwrap_or(buf.len());
+        buf.truncate(endbyte);
+        let buf = buf.trim().into();
+        Ok(buf)
+    } else {
+        let mut buf = String::new();
         if let Ok(f) = fs::File::open(fpath).await {
             let mut buf_read = BufReader::new(f);
             buf_read.read_line(&mut buf).await?;
         }
+        let buf = buf.trim().into();
+        Ok(buf)
     }
-    let buf = buf.trim().into();
-    Ok(buf)
 }
 
 /// # Errors
@@ -96,11 +107,18 @@ pub async fn output_to_stderr(
 /// # Errors
 /// Return error if callback function returns error after timeout
 pub async fn process_child(
-    mut p: Child,
+    mut process: Child,
     stdout_channel: &StdoutChannel<StackString>,
+    label: &str,
 ) -> Result<ExitStatus, Error> {
-    let stdout = p.stdout.take().ok_or_else(|| format_err!("No Stdout"))?;
-    let stderr = p.stderr.take().ok_or_else(|| format_err!("No Stderr"))?;
+    let stdout = process
+        .stdout
+        .take()
+        .ok_or_else(|| format_err!("No Stdout"))?;
+    let stderr = process
+        .stderr
+        .take()
+        .ok_or_else(|| format_err!("No Stderr"))?;
     let stdout_task: JoinHandle<Result<(), Error>> = {
         let reader = BufReader::new(stdout);
         let stdout_channel = stdout_channel.clone();
@@ -111,10 +129,16 @@ pub async fn process_child(
         let stdout_channel = stdout_channel.clone();
         spawn(async move { output_to_stderr(reader, b'\n', &stdout_channel).await })
     };
-    let status = p.wait().await?;
+    let status = process.wait().await?;
     stdout_task.await??;
     stderr_task.await??;
-    Ok(status)
+    if status.success() {
+        Ok(status)
+    } else {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        stdout_channel.send(format_sstr!("{label} failed with {code}"));
+        Err(format_err!("{label} failed with {code}"))
+    }
 }
 
 async fn process_git_directory_branch(repo_directory: &Path, branch: &str) -> Result<(), Error> {
@@ -143,6 +167,38 @@ async fn process_git_directory_branch(repo_directory: &Path, branch: &str) -> Re
         .args(["push", "--tags"])
         .status()
         .await?;
+    Ok(())
+}
+
+async fn process_git_directory(
+    repo_directory: &Path,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<(), Error> {
+    let p = Command::new("git")
+        .current_dir(repo_directory)
+        .args(["stash"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    process_child(p, stdout, "git stash").await?;
+    let output = Command::new("git")
+        .current_dir(repo_directory)
+        .args(["branch"])
+        .output()
+        .await?;
+    let lines = StackString::from_utf8_lossy(&output.stdout);
+    if lines.find(" main").is_some() {
+        process_git_directory_branch(repo_directory, "main").await?;
+    } else if lines.find(" master").is_some() {
+        process_git_directory_branch(repo_directory, "master").await?;
+    }
+    let p = Command::new("git")
+        .current_dir(repo_directory)
+        .args(["gc"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    process_child(p, stdout, "git gc").await?;
     Ok(())
 }
 
@@ -178,48 +234,6 @@ pub async fn update_repos(
     Ok(())
 }
 
-async fn process_git_directory(
-    repo_directory: &Path,
-    stdout: &StdoutChannel<StackString>,
-) -> Result<(), Error> {
-    let p = Command::new("git")
-        .current_dir(repo_directory)
-        .args(["stash"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let status = process_child(p, stdout).await?;
-    if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-        stdout.send(format_sstr!("git stash failed with {code}"));
-        return Ok(());
-    }
-    let output = Command::new("git")
-        .current_dir(repo_directory)
-        .args(["branch"])
-        .output()
-        .await?;
-    let lines = StackString::from_utf8_lossy(&output.stdout);
-    if lines.find(" main").is_some() {
-        process_git_directory_branch(repo_directory, "main").await?;
-    } else if lines.find(" master").is_some() {
-        process_git_directory_branch(repo_directory, "master").await?;
-    }
-    let p = Command::new("git")
-        .current_dir(repo_directory)
-        .args(["gc"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let status = process_child(p, stdout).await?;
-    if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-        stdout.send(format_sstr!("git gc failed with {code}"));
-        return Ok(());
-    }
-    Ok(())
-}
-
 /// # Errors
 /// Return error if callback function returns error after timeout
 pub async fn check_repo(
@@ -242,14 +256,12 @@ pub async fn check_repo(
                 let mut stream = fs::read_dir(&devel_directory).await?;
                 while let Some(entry) = stream.next_entry().await? {
                     let path = entry.path();
-                    if let Some(ext) = path.extension() {
-                        let p = ext.to_string_lossy();
-                        if p != "deb" {
+                    if let Some(ext) = path.extension().and_then(OsStr::to_str) {
+                        if ext != "deb" {
                             continue;
                         }
-                        if let Some(filename) = path.file_name() {
-                            let filename = StackString::from_display(filename.to_string_lossy());
-                            stdout.send(format_sstr!("devel {p} {filename}"));
+                        if let Some(filename) = path.file_name().and_then(OsStr::to_str) {
+                            stdout.send(format_sstr!("devel {ext} {filename}"));
                             if do_cleanup {
                                 let final_path = distro_directory.join(filename);
                                 fs::rename(path, final_path).await?;
@@ -259,13 +271,14 @@ pub async fn check_repo(
                 }
             }
             stdout.send(format_sstr!("distro_deb directory {distro}"));
-            let mut filemap: HashMap<StackString, BTreeSet<(u64, PathBuf)>> = HashMap::new();
+            let mut filemap: HashMap<StackString, BTreeSet<(u64, StackString)>> = HashMap::new();
             let mut stream = fs::read_dir(&distro_directory).await?;
             while let Some(entry) = stream.next_entry().await? {
                 let path = entry.path();
-                if let Some(stem) = path.file_stem() {
-                    let stem = stem.to_string_lossy();
-                    let parts: SmallVec<[&str; 3]> = stem.split('_').take(3).collect();
+                if let Some((path_str, stem_str)) =
+                    path.to_str().zip(path.file_stem().and_then(OsStr::to_str))
+                {
+                    let parts: SmallVec<[&str; 3]> = stem_str.split('_').take(3).collect();
                     if parts.is_empty() {
                         continue;
                     }
@@ -276,7 +289,7 @@ pub async fn check_repo(
                     filemap
                         .entry(repo_name)
                         .or_default()
-                        .insert((mtime, path.clone()));
+                        .insert((mtime, path_str.into()));
                 }
             }
             let mut deb_files = Vec::new();
@@ -310,10 +323,6 @@ pub async fn check_repo(
                 }
             }
             let repo_directory_str = repo_directory.to_string_lossy();
-            let deb_files: Vec<StackString> = deb_files
-                .into_iter()
-                .map(|p| p.to_string_lossy().into())
-                .collect();
             let mut args = vec!["-b", &repo_directory_str, "includedeb", distro];
             args.extend(deb_files.iter().map(StackString::as_str));
             let status = Command::new(&config.reprepro_path)
@@ -345,12 +354,7 @@ pub async fn check_repo(
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()?;
-                let status = process_child(p, stdout).await?;
-                if !status.success() {
-                    let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-                    stdout.send(format_sstr!("aws sync failed with {code}"));
-                    return Ok(());
-                }
+                process_child(p, stdout, "aws sync").await?;
                 for d in ["db", "dists", "pool"] {
                     let subdir = repo_directory.join(d);
                     if subdir.exists() {
@@ -402,11 +406,7 @@ pub async fn authenticate(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let status = process_child(p, stdout).await?;
-    if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-        return Err(format_err!("apt-get update failed with {code}"));
-    }
+    process_child(p, stdout, "apt-get update").await?;
     let status = Command::new(&config.send_to_telegram_path)
         .args([
             "-r",
@@ -448,13 +448,7 @@ pub async fn authenticate(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?;
-            let status = process_child(p, stdout).await?;
-            if !status.success() {
-                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-                return Err(format_err!(
-                    "backup_app_rust postgres.toml failed with {code}"
-                ));
-            }
+            process_child(p, stdout, "backup_app_rust postgres.toml").await?;
         }
     }
     let postgres_local_toml = CONFIG_DIR
@@ -467,13 +461,7 @@ pub async fn authenticate(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        let status = process_child(p, stdout).await?;
-        if !status.success() {
-            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-            return Err(format_err!(
-                "backup_app_rust postgres_local.toml failed with {code}"
-            ));
-        }
+        process_child(p, stdout, "backup_app_rust postgres_local.toml").await?;
     }
     if config.dropbox_path.exists() {
         let status = Command::new(&config.dropbox_path)
@@ -514,13 +502,7 @@ pub async fn authenticate(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()?;
-            let status = process_child(p, stdout).await?;
-            if !status.success() {
-                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
-                return Err(format_err!(
-                    "backup_app_rust postgres.toml failed with {code}"
-                ));
-            }
+            process_child(p, stdout, "backup_app_rust postgres.toml").await?;
         }
     }
 
@@ -779,4 +761,22 @@ pub async fn clear_secrets_restart_systemd(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::get_first_line_of_file;
+
+    #[tokio::test]
+    async fn test_get_first_line_of_file() {
+        let test_file = Path::new("LICENSE");
+
+        assert!(test_file.exists());
+
+        let buf = get_first_line_of_file(test_file).await.unwrap();
+
+        assert_eq!(buf, "MIT License");
+    }
 }
