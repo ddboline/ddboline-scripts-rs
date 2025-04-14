@@ -393,7 +393,9 @@ pub async fn authenticate(
             .args([root_log_path, &final_path])
             .status()
             .await?;
-        if !status.success() {
+        if status.success() {
+            fs::remove_file(&root_log_path).await?;
+        } else {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
         }
