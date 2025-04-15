@@ -28,12 +28,27 @@ use tokio::{
     process::{Child, Command},
     task::{JoinHandle, spawn},
 };
+use stack_string::MAX_INLINE;
+use rand::rng as thread_rng;
+use rand::distr::Alphanumeric;
+use rand::distr::Distribution;
+use rand::distr::SampleString;
 
 use config::{CONFIG_DIR, Config, HOME_DIR};
 
 static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
 const LOG_DIRS: [&str; 3] = ["crontab", "crontab_aws", "crontab_root"];
+
+pub fn get_random_string(n: usize) -> StackString {
+    let mut rng = thread_rng();
+    if n > MAX_INLINE {
+        Alphanumeric.sample_string(&mut rng, n).into()
+    } else {
+        let buf: SmallVec<[u8; MAX_INLINE]> = Alphanumeric.sample_iter(&mut rng).take(n).collect();
+        StackString::from_utf8_lossy(&buf[0..n])
+    }
+}
 
 /// # Errors
 /// Return error if callback function returns error after timeout
@@ -389,12 +404,13 @@ pub async fn authenticate(
     if Path::new(root_log_path).exists() {
         let final_path = HOME_DIR.join("log").join(format_sstr!("crontab_root.log"));
         let final_path = final_path.to_string_lossy();
+        println!("{root_log_path} {final_path}");
         let status = Command::new("cp")
             .args([root_log_path, &final_path])
             .status()
             .await?;
         if status.success() {
-            fs::remove_file(&root_log_path).await?;
+            Command::new("sudo").args(["rm", root_log_path]).status().await?;
         } else {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
@@ -784,6 +800,7 @@ mod tests {
     use std::path::Path;
 
     use crate::get_first_line_of_file;
+    use crate::get_random_string;
 
     #[tokio::test]
     async fn test_get_first_line_of_file() {
@@ -794,5 +811,12 @@ mod tests {
         let buf = get_first_line_of_file(test_file).await.unwrap();
 
         assert_eq!(buf, "MIT License");
+    }
+
+    #[test]
+    fn test_get_random_string() {
+        let s = get_random_string(12);
+        println!("{s}");
+        assert!(false);
     }
 }

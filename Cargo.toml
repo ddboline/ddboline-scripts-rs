@@ -1,6 +1,6 @@
 [package]
 name = "ddboline-scripts-rs"
-version = "0.1.18"
+version = "0.1.19"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2024"
 
@@ -18,6 +18,7 @@ dotenvy = "0.15"
 env_logger = {version="0.11", features=["color", "humantime", "regex"], default-features = false}
 envy = "0.4"
 log = "0.4"
+rand = "0.9"
 serde = "1.0"
 smallvec = "1.15"
 stack-string = { version="1.1", features=["postgres_types"] }
