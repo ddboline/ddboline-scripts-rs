@@ -7,14 +7,20 @@
 pub mod config;
 
 use anyhow::{Error, format_err};
+use checksums::{Algorithm, hash_file};
+use clap::Parser;
 use log::error;
+use rand::{
+    distr::{Alphanumeric, Distribution, SampleString, Uniform},
+    rng as thread_rng,
+};
 use smallvec::SmallVec;
-use stack_string::{StackString, format_sstr};
+use stack_string::{MAX_INLINE, StackString, format_sstr};
 use std::{
     collections::{BTreeSet, HashMap},
     ffi::OsStr,
     fmt,
-    path::Path,
+    path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::LazyLock,
     time::UNIX_EPOCH,
@@ -28,11 +34,6 @@ use tokio::{
     process::{Child, Command},
     task::{JoinHandle, spawn},
 };
-use stack_string::MAX_INLINE;
-use rand::rng as thread_rng;
-use rand::distr::Alphanumeric;
-use rand::distr::Distribution;
-use rand::distr::SampleString;
 
 use config::{CONFIG_DIR, Config, HOME_DIR};
 
@@ -40,6 +41,23 @@ static LOCAL_TZ: LazyLock<&'static Tz> =
     LazyLock::new(|| time_tz::system::get_timezone().unwrap_or(UTC));
 const LOG_DIRS: [&str; 3] = ["crontab", "crontab_aws", "crontab_root"];
 
+fn get_lower_case() -> SmallVec<[char; 26]> {
+    (0..26).map(|v| (b'a' + v as u8) as char).collect()
+}
+
+fn get_upper_case() -> SmallVec<[char; 26]> {
+    (0..26).map(|v| (b'A' + v as u8) as char).collect()
+}
+
+fn get_digits() -> SmallVec<[char; 10]> {
+    (0..10).map(|v| (b'0' + v as u8) as char).collect()
+}
+
+fn get_special_chars() -> SmallVec<[char; 15]> {
+    "~@#$%^&*,.()|/?".chars().collect()
+}
+
+#[must_use]
 pub fn get_random_string(n: usize) -> StackString {
     let mut rng = thread_rng();
     if n > MAX_INLINE {
@@ -48,6 +66,16 @@ pub fn get_random_string(n: usize) -> StackString {
         let buf: SmallVec<[u8; MAX_INLINE]> = Alphanumeric.sample_iter(&mut rng).take(n).collect();
         StackString::from_utf8_lossy(&buf[0..n])
     }
+}
+
+fn get_random_string_from_chars(n: usize, chars: &[char]) -> StackString {
+    let mut rng = thread_rng();
+    let uniform = Uniform::try_from(0..chars.len()).expect("failed to create uniform distribution");
+    uniform
+        .sample_iter(&mut rng)
+        .map(|i| chars[i])
+        .take(n)
+        .collect()
 }
 
 /// # Errors
@@ -410,7 +438,10 @@ pub async fn authenticate(
             .status()
             .await?;
         if status.success() {
-            Command::new("sudo").args(["rm", root_log_path]).status().await?;
+            Command::new("sudo")
+                .args(["rm", root_log_path])
+                .status()
+                .await?;
         } else {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
@@ -795,12 +826,255 @@ pub async fn clear_secrets_restart_systemd(
     Ok(())
 }
 
+async fn get_current_password_file(config: &Config) -> Result<Option<PathBuf>, Error> {
+    let mut current_password_file: Option<StackString> = None;
+    let mut stream = fs::read_dir(&config.password_directory).await?;
+    while let Some(entry) = stream.next_entry().await? {
+        let path = entry.path();
+        if let Some(ext) = path.extension().and_then(OsStr::to_str) {
+            if ext != "asc" {
+                continue;
+            }
+            if let Some(filename) = path.file_name().and_then(OsStr::to_str) {
+                if filename.starts_with("passwords")
+                    && filename.ends_with(".txt.asc")
+                    && (current_password_file.is_none()
+                        || (current_password_file.as_ref().map(StackString::as_str)
+                            < Some(filename)))
+                {
+                    current_password_file.replace(filename.into());
+                }
+            }
+        }
+    }
+    Ok(current_password_file.map(|f| config.password_directory.join(f)))
+}
+
+async fn decrypt_password_file(
+    input: Option<PathBuf>,
+    config: &Config,
+    stdout: &StdoutChannel<StackString>,
+) -> Result<PathBuf, Error> {
+    let date = format_sstr!("{}", OffsetDateTime::now_utc().date());
+    let current_password_file = if let Some(input) = input {
+        if !input.exists() {
+            return Err(format_err!("Password File Not Found"));
+        }
+        input
+    } else {
+        get_current_password_file(config)
+            .await?
+            .ok_or_else(|| format_err!("no password file found"))?
+    };
+    let current_password_str = current_password_file.to_string_lossy();
+    stdout.send(format_sstr!(
+        "current_password_file {current_password_file:?}"
+    ));
+    let f_name = format_sstr!("/tmp/passwords_{date}_{}.txt", get_random_string(16));
+    let status = Command::new("gpg")
+        .args(["--quiet", "--output", &f_name, "-d", &current_password_str])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::inherit())
+        .status()
+        .await?;
+    if !status.success() {
+        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let message = format_sstr!("gpg -d failed with {code}");
+        stdout.send(message.clone());
+        return Err(format_err!("{message}"));
+    }
+    Ok(Path::new(&f_name).to_path_buf())
+}
+
+#[derive(Parser, Debug, Clone)]
+pub enum ShowPasswordOpts {
+    Create {
+        #[clap(short, long)]
+        number_of_characters: Option<usize>,
+    },
+    Show {
+        #[clap(short, long)]
+        input: Option<PathBuf>,
+        #[clap(short, long)]
+        query: Option<StackString>,
+    },
+    Edit {
+        #[clap(short, long)]
+        input: Option<PathBuf>,
+        #[clap(short, long)]
+        output: Option<PathBuf>,
+    },
+    Send {
+        #[clap(short, long)]
+        input: Option<PathBuf>,
+        #[clap(short, long)]
+        query: StackString,
+    },
+}
+
+impl ShowPasswordOpts {
+    /// # Errors
+    /// Returns error for various
+    pub async fn process(
+        self,
+        config: &Config,
+        stdout: &StdoutChannel<StackString>,
+    ) -> Result<(), Error> {
+        match self {
+            Self::Create {
+                number_of_characters,
+            } => {
+                let number_of_characters = number_of_characters.unwrap_or(16);
+                let upper = get_upper_case();
+                let lower = get_lower_case();
+                let digits = get_digits();
+                let special = get_special_chars();
+                let upper_lower = [upper.as_slice(), lower.as_slice()].concat();
+                let upper_lower_digits = [upper_lower.as_slice(), digits.as_slice()].concat();
+                let all_chars = [upper_lower_digits.as_slice(), special.as_slice()].concat();
+
+                let upper_pwd = get_random_string_from_chars(number_of_characters, &upper);
+                let lower_pwd = get_random_string_from_chars(number_of_characters, &lower);
+                let upper_lower_pwd =
+                    get_random_string_from_chars(number_of_characters, &upper_lower);
+                let upper_lower_digits_pwd =
+                    get_random_string_from_chars(number_of_characters, &upper_lower_digits);
+                let chars_pwd = get_random_string_from_chars(number_of_characters, &all_chars);
+                stdout.send(
+                    [
+                        upper_pwd,
+                        lower_pwd,
+                        upper_lower_pwd,
+                        upper_lower_digits_pwd,
+                        chars_pwd,
+                    ]
+                    .join("\n"),
+                );
+            }
+            Self::Show { input, query } => {
+                let f_name = decrypt_password_file(input, config, stdout).await?;
+                if let Some(query) = query {
+                    let f = fs::File::open(&f_name).await?;
+                    let mut reader = BufReader::new(f);
+                    let mut buf = String::new();
+                    while let Ok(bytes) = reader.read_line(&mut buf).await {
+                        if bytes == 0 {
+                            break;
+                        }
+                        if buf.contains(query.as_str()) {
+                            let s = format_sstr!("\n{buf}");
+                            stdout.send(s);
+                            break;
+                        }
+                        buf.clear();
+                    }
+                } else {
+                    let s: StackString = fs::read_to_string(&f_name).await?.into();
+                    stdout.send(s);
+                }
+                fs::remove_file(&f_name).await?;
+            }
+            Self::Send { input, query } => {
+                let f_name = decrypt_password_file(input, config, stdout).await?;
+                let f = fs::File::open(&f_name).await?;
+                let mut reader = BufReader::new(f);
+                let mut buf = String::new();
+                while let Ok(bytes) = reader.read_line(&mut buf).await {
+                    if bytes == 0 {
+                        break;
+                    }
+                    if buf.contains(query.as_str()) {
+                        let status = Command::new(&config.send_to_telegram_path)
+                            .args(["-r", "ddboline", "-m", &buf])
+                            .status()
+                            .await?;
+                        if !status.success() {
+                            let code =
+                                status.code().ok_or_else(|| format_err!("No status code"))?;
+                            return Err(format_err!("send-to-telegram failed with {code}"));
+                        }
+
+                        let s = format_sstr!("{buf}");
+                        stdout.send(s);
+                        break;
+                    }
+                    buf.clear();
+                }
+                fs::remove_file(&f_name).await?;
+            }
+            Self::Edit { input, output } => {
+                let gpg_user = config
+                    .gpg_user
+                    .as_ref()
+                    .ok_or_else(|| format_err!("No gpg user found"))?;
+                let gpg_key = config
+                    .gpg_key
+                    .as_ref()
+                    .ok_or_else(|| format_err!("No gpg key found"))?;
+                let f_path = decrypt_password_file(input, config, stdout).await?;
+                let f_hash = hash_file(&f_path, Algorithm::BLAKE3);
+                let f_name = f_path.to_string_lossy();
+                let status = Command::new("emacs")
+                    .args(["-nw", &f_name])
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .stdin(Stdio::inherit())
+                    .status()
+                    .await?;
+                if !status.success() {
+                    let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                    fs::remove_file(&f_path).await?;
+                    return Err(format_err!("emacs failed with {code}"));
+                }
+                let new_hash = hash_file(&f_path, Algorithm::BLAKE3);
+                if f_hash != new_hash {
+                    let new_password_file = if let Some(output) = output {
+                        output
+                    } else {
+                        let date = format_sstr!("{}", OffsetDateTime::now_utc().date());
+                        config
+                            .password_directory
+                            .join(format_sstr!("passwords_{date}.txt.asc"))
+                    };
+                    let new_password_str = new_password_file.to_string_lossy();
+                    let status = Command::new("gpg")
+                        .args([
+                            "-aes",
+                            "-r",
+                            gpg_key.as_str(),
+                            "-u",
+                            gpg_user.as_str(),
+                            "--output",
+                            &new_password_str,
+                            &f_name,
+                        ])
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .stdin(Stdio::inherit())
+                        .status()
+                        .await?;
+                    if !status.success() {
+                        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                        fs::remove_file(&f_path).await?;
+                        return Err(format_err!("gpg encrypt failed with {code}"));
+                    }
+                }
+                fs::remove_file(&f_path).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use crate::get_first_line_of_file;
-    use crate::get_random_string;
+    use crate::{
+        get_digits, get_first_line_of_file, get_lower_case, get_random_string,
+        get_random_string_from_chars, get_special_chars, get_upper_case,
+    };
 
     #[tokio::test]
     async fn test_get_first_line_of_file() {
@@ -817,6 +1091,38 @@ mod tests {
     fn test_get_random_string() {
         let s = get_random_string(12);
         println!("{s}");
-        assert!(false);
+    }
+
+    #[test]
+    fn test_get_random_string_from_chars() {
+        let upper = get_upper_case();
+        let lower = get_lower_case();
+        let digits = get_digits();
+        let special = get_special_chars();
+
+        let s = get_random_string_from_chars(16, &upper);
+        assert_eq!(s.len(), 16);
+        println!("{s}");
+
+        let s = get_random_string_from_chars(16, &lower);
+        assert_eq!(s.len(), 16);
+        println!("{s}");
+
+        let upper_lower = [upper.as_slice(), lower.as_slice()].concat();
+        let s = get_random_string_from_chars(16, &upper_lower);
+        assert_eq!(s.len(), 16);
+        println!("{s}");
+
+        let chars = [
+            upper.as_slice(),
+            lower.as_slice(),
+            digits.as_slice(),
+            special.as_slice(),
+        ]
+        .concat();
+
+        let s = get_random_string_from_chars(16, &chars);
+        assert_eq!(s.len(), 16);
+        println!("{s}");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ddboline-scripts-rs"
-version = "0.1.19"
+version = "0.1.20"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2024"
 
@@ -13,6 +13,8 @@ extended-description = """Utility Scripts"""
 
 [dependencies]
 anyhow = "1.0"
+checksums = "0.9"
+clap = {version="4.5", features=["derive"]}
 dirs = "6.0"
 dotenvy = "0.15"
 env_logger = {version="0.11", features=["color", "humantime", "regex"], default-features = false}
@@ -65,4 +67,9 @@ doc = false
 [[bin]]
 name = "restart-auth-server-rs"
 path = "src/restart_auth_server.rs"
+doc = false
+
+[[bin]]
+name = "show-password-rs"
+path = "src/show_password.rs"
 doc = false

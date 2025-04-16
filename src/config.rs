@@ -59,6 +59,14 @@ pub struct ConfigInner {
     pub secret_path: PathBuf,
     #[serde(default = "default_secret_path")]
     pub jwt_secret_path: PathBuf,
+    #[serde(default = "default_password_directory")]
+    pub password_directory: PathBuf,
+    pub gpg_user: Option<StackString>,
+    pub gpg_key: Option<StackString>,
+}
+
+fn default_password_directory() -> PathBuf {
+    HOME_DIR.join("Dropbox").join("encrypted_passwords")
 }
 
 fn default_reprepro_path() -> PathBuf {
