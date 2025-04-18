@@ -341,9 +341,9 @@ pub async fn check_repo(
                     let (_, p) = v
                         .pop_first()
                         .ok_or_else(|| format_err!("unexpected result {v:?}"))?;
-                    stdout.send(format_sstr!("duplicate {p:?}"));
+                    stdout.send(format_sstr!("duplicate {p}"));
                     if do_cleanup {
-                        stdout.send(format_sstr!("remove {p:?}"));
+                        stdout.send(format_sstr!("remove {p}"));
                         fs::remove_file(&p).await?;
                     }
                 }
