@@ -296,19 +296,36 @@ pub async fn check_repo(
                 .join(distro)
                 .join(format_sstr!("devel_{dir}"));
             if devel_directory.exists() {
+                let mut deb_files = Vec::new();
+                let mut log_files = Vec::new();
                 let mut stream = fs::read_dir(&devel_directory).await?;
                 while let Some(entry) = stream.next_entry().await? {
                     let path = entry.path();
                     if let Some(ext) = path.extension().and_then(OsStr::to_str) {
-                        if ext != "deb" {
-                            continue;
+                        if ext == "deb" {
+                            deb_files.push(path);
+                        } else if ext == "log" {
+                            log_files.push(path);
                         }
-                        if let Some(filename) = path.file_name().and_then(OsStr::to_str) {
-                            stdout.send(format_sstr!("devel {ext} {filename}"));
-                            if do_cleanup {
-                                let final_path = distro_directory.join(filename);
-                                fs::rename(path, final_path).await?;
-                            }
+                    }
+                }
+
+                for path in log_files {
+                    let buf = fs::read_to_string(&path).await?;
+                    for line in buf.split('\n') {
+                        stdout.send(StackString::from(line));
+                    }
+                    if do_cleanup {
+                        fs::remove_file(&path).await?;
+                    }
+                }
+
+                for path in deb_files {
+                    if let Some(filename) = path.file_name().and_then(OsStr::to_str) {
+                        stdout.send(format_sstr!("devel {filename}"));
+                        if do_cleanup {
+                            let final_path = distro_directory.join(filename);
+                            fs::rename(path, final_path).await?;
                         }
                     }
                 }
