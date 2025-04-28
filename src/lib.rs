@@ -312,7 +312,8 @@ pub async fn check_repo(
 
                 for path in log_files {
                     let buf = fs::read_to_string(&path).await?;
-                    for line in buf.split('\n') {
+                    let lines = buf.split('\n').count();
+                    for line in buf.split('\n').skip(lines - 20) {
                         stdout.send(StackString::from(line));
                     }
                     if do_cleanup {
