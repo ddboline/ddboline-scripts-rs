@@ -451,7 +451,10 @@ pub async fn authenticate(
     let root_log_path = HOME_DIR.join("log").join(format_sstr!("crontab_root.log"));
     if root_log_path.exists() {
         let final_path = root_log_path.to_string_lossy();
-        let status = Command::new("sudo").args(["chown", &format_sstr!("{user}:{user}"), &final_path]).status().await?;
+        let status = Command::new("sudo")
+            .args(["chown", &format_sstr!("{user}:{user}"), &final_path])
+            .status()
+            .await?;
         if !status.success() {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
