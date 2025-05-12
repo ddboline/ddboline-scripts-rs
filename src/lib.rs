@@ -437,6 +437,8 @@ pub async fn authenticate(
     let hostname = get_first_line_of_file(Path::new("/etc/hostname")).await?;
     stdout.send(format_sstr!("hostname {hostname}"));
 
+    let user = std::env::var("USER")?;
+
     let current_date = OffsetDateTime::now_utc();
 
     let format = format_description!(
@@ -446,21 +448,11 @@ pub async fn authenticate(
     let date_str = current_date.to_timezone(*LOCAL_TZ).format(format)?;
     stdout.send(format_sstr!("date {date_str}"));
 
-    let root_log_path = "/tmp/crontab_root.log";
-    if Path::new(root_log_path).exists() {
-        let final_path = HOME_DIR.join("log").join(format_sstr!("crontab_root.log"));
-        let final_path = final_path.to_string_lossy();
-        println!("{root_log_path} {final_path}");
-        let status = Command::new("cp")
-            .args([root_log_path, &final_path])
-            .status()
-            .await?;
-        if status.success() {
-            Command::new("sudo")
-                .args(["rm", root_log_path])
-                .status()
-                .await?;
-        } else {
+    let root_log_path = HOME_DIR.join("log").join(format_sstr!("crontab_root.log"));
+    if root_log_path.exists() {
+        let final_path = root_log_path.to_string_lossy();
+        let status = Command::new("sudo").args(["chown", &format_sstr!("{user}:{user}"), &final_path]).status().await?;
+        if !status.success() {
             let code = status.code().ok_or_else(|| format_err!("No status code"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
         }
