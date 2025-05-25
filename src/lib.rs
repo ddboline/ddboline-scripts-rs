@@ -58,7 +58,7 @@ fn get_special_chars() -> SmallVec<[char; 15]> {
 }
 
 #[must_use]
-pub fn get_random_string(n: usize) -> StackString {
+fn get_random_string(n: usize) -> StackString {
     let mut rng = thread_rng();
     if n > MAX_INLINE {
         Alphanumeric.sample_string(&mut rng, n).into()
@@ -78,9 +78,7 @@ fn get_random_string_from_chars(n: usize, chars: &[char]) -> StackString {
         .collect()
 }
 
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn get_first_line_of_file(fpath: &Path) -> Result<StackString, Error> {
+async fn get_first_line_of_file(fpath: &Path) -> Result<StackString, Error> {
     if !fpath.exists() {
         return Ok(StackString::new());
     }
@@ -102,9 +100,7 @@ pub async fn get_first_line_of_file(fpath: &Path) -> Result<StackString, Error> 
     }
 }
 
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn process_reader(
+async fn process_reader(
     mut reader: BufReader<impl AsyncRead + Unpin>,
     eol: u8,
     f: impl Fn(&[u8]),
@@ -121,9 +117,7 @@ pub async fn process_reader(
     Ok(())
 }
 
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn output_to_stdout(
+async fn output_to_stdout(
     reader: BufReader<impl AsyncRead + Unpin>,
     eol: u8,
     stdout: &StdoutChannel<StackString>,
@@ -134,9 +128,7 @@ pub async fn output_to_stdout(
     .await
 }
 
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn output_to_stderr(
+async fn output_to_stderr(
     reader: BufReader<impl AsyncRead + Unpin>,
     eol: u8,
     stdout: &StdoutChannel<StackString>,
@@ -147,9 +139,7 @@ pub async fn output_to_stderr(
     .await
 }
 
-/// # Errors
-/// Return error if callback function returns error after timeout
-pub async fn process_child(
+async fn process_child(
     mut process: Child,
     stdout_channel: &StdoutChannel<StackString>,
     label: &str,
@@ -1103,6 +1093,7 @@ mod tests {
     #[test]
     fn test_get_random_string() {
         let s = get_random_string(12);
+        assert_eq!(s.len(), 12);
         println!("{s}");
     }
 
@@ -1115,15 +1106,18 @@ mod tests {
 
         let s = get_random_string_from_chars(16, &upper);
         assert_eq!(s.len(), 16);
+        assert!(s.chars().all(|c| upper.contains(&c)));
         println!("{s}");
 
         let s = get_random_string_from_chars(16, &lower);
         assert_eq!(s.len(), 16);
+        assert!(s.chars().all(|c| lower.contains(&c)));
         println!("{s}");
 
         let upper_lower = [upper.as_slice(), lower.as_slice()].concat();
         let s = get_random_string_from_chars(16, &upper_lower);
         assert_eq!(s.len(), 16);
+        assert!(s.chars().all(|c| upper_lower.contains(&c)));
         println!("{s}");
 
         let chars = [
@@ -1136,6 +1130,7 @@ mod tests {
 
         let s = get_random_string_from_chars(16, &chars);
         assert_eq!(s.len(), 16);
+        assert!(s.chars().all(|c| chars.contains(&c)));
         println!("{s}");
     }
 }
