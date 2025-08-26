@@ -168,7 +168,9 @@ async fn process_child(
     if status.success() {
         Ok(status)
     } else {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 0 {label}"))?;
         stdout_channel.send(format_sstr!("{label} failed with {code}"));
         Err(format_err!("{label} failed with {code}"))
     }
@@ -384,7 +386,9 @@ pub async fn check_repo(
                 .status()
                 .await?;
             if !status.success() {
-                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                let code = status
+                    .code()
+                    .ok_or_else(|| format_err!("No status code 1"))?;
                 stdout.send(format_sstr!("reprepro failed with {code}"));
                 return Ok(());
             }
@@ -446,7 +450,9 @@ pub async fn authenticate(
             .status()
             .await?;
         if !status.success() {
-            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 2"))?;
             stdout.send(format_sstr!("copy failed with {code}"));
         }
     }
@@ -461,7 +467,9 @@ pub async fn authenticate(
             fs::rename(&log_path, &new_path).await?;
             let status = Command::new("gzip").args([&new_path]).status().await?;
             if !status.success() {
-                let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                let code = status
+                    .code()
+                    .ok_or_else(|| format_err!("No status code 3"))?;
                 stdout.send(format_sstr!("gzip failed with {code}"));
             }
         }
@@ -483,7 +491,9 @@ pub async fn authenticate(
         .status()
         .await?;
     if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 4"))?;
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
     let status = Command::new("sudo")
@@ -494,7 +504,9 @@ pub async fn authenticate(
         .status()
         .await?;
     if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 5"))?;
         error!("apt-get dist-upgrade failed with {code}");
     }
     if hostname == "dilepton-tower" {
@@ -503,7 +515,9 @@ pub async fn authenticate(
             .status()
             .await?;
         if !status.success() {
-            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 6"))?;
             return Err(format_err!("modprobe vboxdrv failed with {code}"));
         }
         let postgres_toml = CONFIG_DIR.join("backup_app_rust").join("postgres.toml");
@@ -535,7 +549,9 @@ pub async fn authenticate(
             .status()
             .await?;
         if !status.success() {
-            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 7"))?;
             return Err(format_err!("dropbox failed with {code}"));
         }
     }
@@ -549,7 +565,9 @@ pub async fn authenticate(
         .status()
         .await?;
     if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 8"))?;
         return Err(format_err!("send-to-telegram failed with {code}"));
     }
     update_repos(config, stdout).await?;
@@ -808,7 +826,9 @@ pub async fn clear_secrets_restart_systemd(
         .status()
         .await?;
     if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 9"))?;
         error!("systemctl restart auth-server-rust failed with code {code}");
     }
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -822,7 +842,9 @@ pub async fn clear_secrets_restart_systemd(
             .status()
             .await?;
         if !status.success() {
-            let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 10"))?;
             error!("systemctl restart {service} failed with code {code}");
         }
     }
@@ -838,15 +860,13 @@ async fn get_current_password_file(config: &Config) -> Result<Option<PathBuf>, E
             if ext != "asc" {
                 continue;
             }
-            if let Some(filename) = path.file_name().and_then(OsStr::to_str) {
-                if filename.starts_with("passwords")
-                    && filename.ends_with(".txt.asc")
-                    && (current_password_file.is_none()
-                        || (current_password_file.as_ref().map(StackString::as_str)
-                            < Some(filename)))
-                {
-                    current_password_file.replace(filename.into());
-                }
+            if let Some(filename) = path.file_name().and_then(OsStr::to_str)
+                && filename.starts_with("passwords")
+                && filename.ends_with(".txt.asc")
+                && (current_password_file.is_none()
+                    || (current_password_file.as_ref().map(StackString::as_str) < Some(filename)))
+            {
+                current_password_file.replace(filename.into());
             }
         }
     }
@@ -882,7 +902,9 @@ async fn decrypt_password_file(
         .status()
         .await?;
     if !status.success() {
-        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+        let code = status
+            .code()
+            .ok_or_else(|| format_err!("No status code 11"))?;
         let message = format_sstr!("gpg -d failed with {code}");
         stdout.send(message.clone());
         return Err(format_err!("{message}"));
@@ -993,8 +1015,9 @@ impl ShowPasswordOpts {
                             .status()
                             .await?;
                         if !status.success() {
-                            let code =
-                                status.code().ok_or_else(|| format_err!("No status code"))?;
+                            let code = status
+                                .code()
+                                .ok_or_else(|| format_err!("No status code 12"))?;
                             return Err(format_err!("send-to-telegram failed with {code}"));
                         }
 
@@ -1026,7 +1049,9 @@ impl ShowPasswordOpts {
                     .status()
                     .await?;
                 if !status.success() {
-                    let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                    let code = status
+                        .code()
+                        .ok_or_else(|| format_err!("No status code 13"))?;
                     fs::remove_file(&f_path).await?;
                     return Err(format_err!("emacs failed with {code}"));
                 }
@@ -1058,7 +1083,9 @@ impl ShowPasswordOpts {
                         .status()
                         .await?;
                     if !status.success() {
-                        let code = status.code().ok_or_else(|| format_err!("No status code"))?;
+                        let code = status
+                            .code()
+                            .ok_or_else(|| format_err!("No status code 14"))?;
                         fs::remove_file(&f_path).await?;
                         return Err(format_err!("gpg encrypt failed with {code}"));
                     }
