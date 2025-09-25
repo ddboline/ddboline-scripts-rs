@@ -510,16 +510,16 @@ pub async fn authenticate(
         error!("apt-get dist-upgrade failed with {code}");
     }
     if hostname == "dilepton-tower" {
-        // let status = Command::new("sudo")
-        //     .args(["modprobe", "vboxdrv"])
-        //     .status()
-        //     .await?;
-        // if !status.success() {
-        //     let code = status
-        //         .code()
-        //         .ok_or_else(|| format_err!("No status code 6"))?;
-        //     return Err(format_err!("modprobe vboxdrv failed with {code}"));
-        // }
+        let status = Command::new("sudo")
+            .args(["modprobe", "vboxdrv"])
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 6"))?;
+            return Err(format_err!("modprobe vboxdrv failed with {code}"));
+        }
         let postgres_toml = CONFIG_DIR.join("backup_app_rust").join("postgres.toml");
         if postgres_toml.exists() {
             let postgres_toml = postgres_toml.to_string_lossy();
