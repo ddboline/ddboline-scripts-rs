@@ -1,6 +1,6 @@
 [package]
 name = "ddboline-scripts-rs"
-version = "0.1.29"
+version = "0.1.30"
 authors = ["Daniel Boline <ddboline@gmail.com>"]
 edition = "2024"
 
@@ -25,7 +25,7 @@ serde = "1.0"
 smallvec = "1.15"
 stack-string = { version="1.1", features=["postgres_types"] }
 stdout-channel = "0.6"
-tokio = {version="1.47", features=["rt", "macros", "rt-multi-thread", "fs", "io-util", "process", "time"]}
+tokio = {version="1.48", features=["rt", "macros", "rt-multi-thread", "fs", "io-util", "process", "time"]}
 time = {version="0.3", features=["serde-human-readable", "macros", "formatting"]}
 time-tz = {version="2.0", features=["system"]}
 
