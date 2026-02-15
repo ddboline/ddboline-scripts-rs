@@ -520,6 +520,26 @@ pub async fn authenticate(
                 .ok_or_else(|| format_err!("No status code 6"))?;
             return Err(format_err!("modprobe vboxdrv failed with {code}"));
         }
+        let status = Command::new("sudo")
+            .args(["modprobe", "-r", "kvm"])
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 6"))?;
+            return Err(format_err!("modprobe -d kvm failed with {code}"));
+        }
+        let status = Command::new("sudo")
+            .args(["modprobe", "-r", "kvm_amd"])
+            .status()
+            .await?;
+        if !status.success() {
+            let code = status
+                .code()
+                .ok_or_else(|| format_err!("No status code 6"))?;
+            return Err(format_err!("modprobe -d kvm failed with {code}"));
+        }
         let postgres_toml = CONFIG_DIR.join("backup_app_rust").join("postgres.toml");
         if postgres_toml.exists() {
             let postgres_toml = postgres_toml.to_string_lossy();
