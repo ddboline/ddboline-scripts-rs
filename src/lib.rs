@@ -521,7 +521,7 @@ pub async fn authenticate(
             return Err(format_err!("modprobe vboxdrv failed with {code}"));
         }
         let status = Command::new("sudo")
-            .args(["modprobe", "-r", "kvm"])
+            .args(["modprobe", "-r", "kvm_amd"])
             .status()
             .await?;
         if !status.success() {
@@ -531,7 +531,7 @@ pub async fn authenticate(
             return Err(format_err!("modprobe -d kvm failed with {code}"));
         }
         let status = Command::new("sudo")
-            .args(["modprobe", "-r", "kvm_amd"])
+            .args(["modprobe", "-r", "kvm"])
             .status()
             .await?;
         if !status.success() {
